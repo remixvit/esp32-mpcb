@@ -41,8 +41,8 @@ void setup() {
     if (mqtt.host.isEmpty()) {
         mqtt.host = "mqtt.mpcbstudio.com";
         mqtt.port = 8883;
-        mqtt.user = "user_3";
-        mqtt.password = "Da6vInaZXM5rUFFkobcEgA";
+        mqtt.user = "user_4";
+        mqtt.password = "DATeyjWZ6sd9N-5wFtj5vg";
         mqtt.tls  = true;
         iot.storage().saveMqtt(mqtt);
     }
@@ -59,17 +59,21 @@ void setup() {
                     setColor(0, 60, 0); delay(150);
                     setColor(0,  0, 0); delay(100);
                 }
-                // Запускаем PeriphManager — он читает конфиг из NVS,
-                // инициализирует пины и подписывается на MQTT топики
+                // Загружаем deviceId здесь — iot.begin() уже сохранил его в NVS
+                deviceId = iot.storage().loadDevice().deviceId;
                 pm.begin(deviceId, iot.storage(), iot);
                 break;
             default: break;
         }
     });
 
+    // ── MQTT подключение (начальное + реконнект) ─────────────────────────────
+    iot.onMqttConnected([]() {
+        pm.onMqttConnected();  // re-subscribe + config + initial states
+    });
+
     // ── MQTT входящие ────────────────────────────────────────────────────────
     iot.onMqttMessage([](const String& topic, const String& payload) {
-        // PeriphManager обрабатывает все топики своих устройств
         pm.handleMessage(topic, payload);
     });
 
