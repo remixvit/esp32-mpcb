@@ -108,9 +108,47 @@ I2C инфраструктура уже готова (`i2cAddr` в Peripheral, W
 | Датчик | Тип | Библиотека | Адрес | Особенность |
 |--------|-----|------------|-------|-------------|
 | VL53L0X | ToF дистанция | `adafruit/Adafruit_VL53L0X` | 0x29 | XSHUT пин для >1 датчика |
-| PCF8574 | Порт-экспандер | `robtillaart/PCF8574` | 0x20–0x27 | 8 каналов, нужен `channel` в Peripheral |
+| PCF8574 | Порт-экспандер | `robtillaart/PCF8574` | 0x20–0x27 | 8 каналов |
 
-Для PCF8574 нужно добавить `uint8_t channel` в struct Peripheral.
+**PCF8574 — архитектура:** два новых типа `pcf_relay` и `pcf_button` в плоском списке
+периферии (каждый пин — отдельная запись). Добавить `uint8_t channel` в struct Peripheral.
+MAX_PERIPHERALS поднять с 12 до 24. Подробнее — см. раздел ниже.
+
+### PCF8574 — детальная архитектура
+
+**Модель данных:** каждый пин PCF8574 — отдельная запись в плоском списке периферии.
+
+```json
+[
+  {"type": "pcf_relay",  "i2cAddr": 32, "channel": 0, "label": "Relay1"},
+  {"type": "pcf_relay",  "i2cAddr": 32, "channel": 1, "label": "Relay2"},
+  {"type": "pcf_button", "i2cAddr": 32, "channel": 6, "label": "DoorSensor"},
+  {"type": "pcf_button", "i2cAddr": 32, "channel": 7, "label": "Window"}
+]
+```
+
+**MQTT — полностью идентично relay/button:**
+- `pcf_relay`  → `mpcb/devices/{id}/{key}/state` = `{"on": bool}`, set = `{"on": bool}`
+- `pcf_button` → `mpcb/devices/{id}/{key}/state` = `{"pressed": bool}`
+- Сервер и Flutter работают без изменений.
+
+**Rules engine — без изменений:**
+- `pcf_button` триггерит правила так же как `button`
+- `pcf_relay` управляется правилами так же как `relay`
+
+**Что менять в коде:**
+1. `Peripheral`: добавить `uint8_t channel = 0`
+2. `MAX_PERIPHERALS`: 12 → 24
+3. `_initPeriph()`: для pcf_relay/pcf_button инициализировать PCF8574 объект (один на адрес, shared через static map или array)
+4. `_loopPeriph()`: pcf_button — читать пин через PCF8574, edge detection как у обычной кнопки
+5. `_applyCommand()`: pcf_relay — писать пин через PCF8574
+6. ConfigServer: pcf_relay/pcf_button показывают i2cAddr (0x20–0x27) + channel (0–7)
+7. Валидация: запрет дублей i2cAddr+channel
+
+**Адреса I2C_ADDRS** нужно расширить с [0x38, 0x39] до отдельных массивов по типу:
+- AHT10: 0x38, 0x39
+- PCF8574: 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27
+- VL53: 0x29
 
 ### После VL53/PCF — ITransport абстракция
 
@@ -133,6 +171,29 @@ I2C инфраструктура уже готова (`i2cAddr` в Peripheral, W
 - GPIO экран: тумблеры реле, значения датчиков
 - Rules экран
 - Маркер PS→MC
+
+## Flash/RAM бюджет (актуально на 2026-05)
+
+Замеры на финальной прошивке (WiFi+BLE+MQTT+AHT10+rules):
+```
+Flash: 86%  (1577 КБ из 1835 КБ)  — свободно ~258 КБ
+RAM:   18%  (59 КБ из 320 КБ)     — свободно ~268 КБ
+```
+
+Крупнейшие константы в Flash:
+| Символ | Размер | Что |
+|--------|--------|-----|
+| `PORTAL_HTML` | 3.4 КБ | AP-портал HTML |
+| `CONFIG_CSS` | 3.2 КБ | CSS веб-интерфейса |
+| `_handleGpio` inline JS | ~12.9 КБ | GPIO-страница JavaScript |
+
+**Критическая отметка — 90% (1651 КБ)**. До неё ~74 КБ.
+VL53 + PCF8574 библиотеки добавят ~20-30 КБ → всё ещё комфортно.
+
+Сжатие HTML актуально только если Flash перевалит за 90%. Тогда:
+- Gzip PROGMEM для CONFIG_CSS + _handleGpio JS → экономия ~12 КБ
+- Подход: Python-скрипт в `extra_scripts` PlatformIO сжимает при билде,
+  отдаём с заголовком `Content-Encoding: gzip`
 
 ## Важно: обновление библиотеки
 
