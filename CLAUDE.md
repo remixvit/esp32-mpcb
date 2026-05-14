@@ -112,10 +112,15 @@ platformio.ini использует GitHub URL — PlatformIO кеширует.
 # 1. Запушить изменения в mpcb-iot-core
 cd e:/Projects/mpcb-iot-core; git push
 
-# 2. Сбросить кеш и перепрошить
+# 2. Обновить пакет и перепрошить (pkg update — правильный способ, без потери libdeps)
 cd e:/Projects/esp32-mpcb
-Remove-Item -Recurse -Force ".pio\libdeps"
+git config --global --add safe.directory "E:/Projects/esp32-mpcb/.pio/libdeps/esp32c6-supermini/mpcb-iot-core"
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" pkg update
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run --target upload
+
+# Альтернатива если pkg update не помогает — полный сброс:
+# Remove-Item -Recurse -Force ".pio\libdeps"
+# & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run --target upload
 ```
 
 ## Опциональные библиотеки датчиков
