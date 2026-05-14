@@ -23,6 +23,8 @@
 | ⚠ Warn | 4–7 (JTAG), 8 (WS2812), 9 (BOOT), 15 (LED) | Осторожно |
 | ✅ Safe | 0, 1, 2, 3 (ADC), 14, 20 (RX), 21 (TX), 22 (SDA), 23 (SCL) | Свободно |
 
+**I2C шина:** SDA=GPIO22, SCL=GPIO23 (фиксировано в прошивке — `Wire.begin(22, 23)`)
+
 ## Библиотека mpcb-iot-core
 
 Ключевые файлы:
@@ -52,21 +54,35 @@ announce → subscribe +/set → config → {key}/state (не для датчи�
 - OTA через BLE и через веб (HTTP upload .bin)
 - ConfigServer (веб UI): Device, WiFi, MQTT, GPIO, Logs, OTA
 - mDNS `http://mpcb-XXXX.local` + `/api/reboot`
-- **PeriphManager**: relay, button (30мс debounce), analog (10с), pwm, neopixel (ack),
-  dht22 (30с, auto-detect через `__has_include<DHT.h>`),
-  ds18b20 (30с, auto-detect через `__has_include<DallasTemperature.h>`)
-- **Rules engine**: trigger(input) → action(output) с pulse, on/off/toggle
-- **GPIO конструктор веб UI**: dropdown пинов ESP32-C6 Super Mini с ограничениями
-- **Per-type limits** (UI + серверная валидация): relay:8, button:8, analog:4, pwm:4,
-  neopixel:2, dht22:2, ds18b20:2, vl53:1, pcf8574:2
-- **Rules UI**: trigger=только входы (button/analog/dht22/ds18b20/vl53),
-  target=только выходы (relay/pwm/neopixel/pcf8574)
-- Нормализация ключей правил lowercase при сохранении через BLE
-- Серверная валидация: forbidden pins, дубли, type limits
+- **PeriphManager — GPIO типы:**
+  - `relay` — цифровой выход ON/OFF/pulse
+  - `button` — цифровой вход (30мс debounce)
+  - `analog` — ADC, публикует каждые 10с
+  - `pwm` — ШИМ 0–255
+  - `neopixel` — WS2812 ack-only
+  - `dht22` — temp+humidity каждые 30с (auto-detect `__has_include<DHT.h>`)
+  - `ds18b20` — температура каждые 30с (auto-detect `__has_include<DallasTemperature.h>`)
+  - `aht10` — I2C temp+humidity каждые 30с (auto-detect `__has_include<Adafruit_AHTX0.h>`)
+    адреса 0x38/0x39, Wire.begin(22,23) автоматически
+- **Rules engine:**
+  - Кнопки: `pressed` / `released` / `any` → `on` / `off` / `toggle` / `pulse`
+  - Датчики: `temp_above` / `temp_below` / `hum_above` / `hum_below` / `above` / `below`
+    с порогом (float) и гистерезисным лэтчем (re-arms когда условие перестаёт выполняться)
+- **GPIO конструктор веб UI:**
+  - Dropdown пинов ESP32-C6 Super Mini (forbidden/warn/safe)
+  - I2C типы: dropdown адреса (0x38/0x39) вместо пина + подсказка `SDA→22 SCL→23`
+  - Автопереключение pin↔addr при смене типа GPIO↔I2C
+  - Per-type limits (UI + серверная валидация):
+    relay:8, button:8, analog:4, pwm:4, neopixel:2, dht22:2, ds18b20:2, aht10:2, vl53:1, pcf8574:2
+- **Rules UI:** trigger=только входы (button/analog/dht22/ds18b20/aht10/vl53),
+  target=только выходы (relay/pwm/neopixel/pcf8574);
+  события и поле порога меняются динамически в зависимости от типа триггера
+- Нормализация ключей правил lowercase (BLE + веб)
+- Серверная валидация: forbidden pins, дубли, type limits, I2C типы пропускают pin-проверку
 
 ### esp32-mpcb
 - Прошивка "Ворота цех": NeoPixel статус, реле Gate (GPIO4), кнопка (GPIO3)
-- platformio.ini: GitHub URL для mpcb-iot-core (не локальный путь)
+- platformio.ini: GitHub URL + все библиотеки датчиков включены
 - CLAUDE.md в репо для кросс-машинной работы
 
 ## Архитектурный план → многочиповость
@@ -84,13 +100,27 @@ class ITransport {
 
 ## Роадмап
 
-### Следующий шаг — I2C датчики (требуют расширения Peripheral)
-Добавить в struct: `uint8_t i2cAddr`, `uint8_t channel`
+### Следующий шаг — VL53L0X и PCF8574
 
-| Датчик | Тип | Библиотека | Особенность |
-|--------|-----|------------|-------------|
-| VL53L0X | ToF дистанция | `adafruit/Adafruit_VL53L0X` | I2C 0x29, XSHUT пин для >1 датчика |
-| PCF8574 | Порт-экспандер | `robtillaart/PCF8574` | I2C 0x20–0x27, 8 каналов |
+I2C инфраструктура уже готова (`i2cAddr` в Peripheral, Wire.begin, I2C конструктор в UI).
+Нужно только добавить реализацию типов:
+
+| Датчик | Тип | Библиотека | Адрес | Особенность |
+|--------|-----|------------|-------|-------------|
+| VL53L0X | ToF дистанция | `adafruit/Adafruit_VL53L0X` | 0x29 | XSHUT пин для >1 датчика |
+| PCF8574 | Порт-экспандер | `robtillaart/PCF8574` | 0x20–0x27 | 8 каналов, нужен `channel` в Peripheral |
+
+Для PCF8574 нужно добавить `uint8_t channel` в struct Peripheral.
+
+### После VL53/PCF — ITransport абстракция
+
+Разделить `MpcbIotCore` от `PeriphManager` через интерфейс `ITransport`.
+Даст возможность добавить Zigbee без переписывания периферии.
+
+### OTA via MQTT (ждём сервер)
+
+Сервер пришлёт `{"cmd":"ota","url":"https://..."}` через MQTT.
+Реализация: `HTTPClient` скачивает `.bin`, `Update.h` прошивает.
 
 ### Новые устройства
 | Устройство | Трудозатраты | Основная работа |
@@ -112,23 +142,25 @@ platformio.ini использует GitHub URL — PlatformIO кеширует.
 # 1. Запушить изменения в mpcb-iot-core
 cd e:/Projects/mpcb-iot-core; git push
 
-# 2. Обновить пакет и перепрошить (pkg update — правильный способ, без потери libdeps)
+# 2. Обновить пакет и перепрошить
 cd e:/Projects/esp32-mpcb
 git config --global --add safe.directory "E:/Projects/esp32-mpcb/.pio/libdeps/esp32c6-supermini/mpcb-iot-core"
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" pkg update
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run --target upload
 
-# Альтернатива если pkg update не помогает — полный сброс:
+# Если pkg update не помогает — полный сброс:
 # Remove-Item -Recurse -Force ".pio\libdeps"
 # & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run --target upload
 ```
 
-## Опциональные библиотеки датчиков
+## Библиотеки в platformio.ini (текущие)
 
-Добавь в platformio.ini при необходимости:
 ```ini
-adafruit/DHT sensor library @ ^1.4.0
-milesburton/DallasTemperature @ ^3.9.0
-paulstoffregen/OneWire @ ^2.3.8
+lib_deps =
+    https://github.com/remixvit/mpcb-iot-core
+    adafruit/Adafruit NeoPixel @ ^1.12.0
+    adafruit/DHT sensor library @ ^1.4.0
+    milesburton/DallasTemperature @ ^3.9.0
+    https://github.com/paulstoffregen/OneWire   # GitHub — PlatformIO registry не совместим с ESP32-C6
+    adafruit/Adafruit AHTX0 @ ^2.0.5
 ```
-При отсутствии библиотеки тип датчика логирует ошибку, но не крашит прошивку.
