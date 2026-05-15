@@ -67,14 +67,17 @@ announce → subscribe +/set → config → {key}/state (не для датчи�
   - `ds18b20` — температура каждые 30с (auto-detect `__has_include<DallasTemperature.h>`)
   - `aht10` — I2C temp+humidity каждые 30с (auto-detect `__has_include<Adafruit_AHTX0.h>`)
     адреса 0x38/0x39, Wire.begin(22,23) автоматически
+  - `vl53` — ToF дистанция мм каждые 500мс (auto-detect L0X и/или L1X)
+    Если оба в lib_deps — runtime detection: сначала пробует L1X, fallback L0X
+    Публикует `{"distance": mm}`, правила `above`/`below`, адрес 0x29
 - **Rules engine:**
   - Кнопки: `pressed` / `released` / `any` → `on` / `off` / `toggle` / `pulse`
   - Датчики: `temp_above` / `temp_below` / `hum_above` / `hum_below` / `above` / `below`
     с порогом (float) и гистерезисным лэтчем (re-arms когда условие перестаёт выполняться)
 - **GPIO конструктор веб UI:**
   - Dropdown пинов ESP32-C6 Super Mini (forbidden/warn/safe)
-  - I2C типы: dropdown адреса (0x38/0x39) вместо пина + подсказка `SDA→22 SCL→23`
-  - Автопереключение pin↔addr при смене типа GPIO↔I2C
+  - I2C типы: per-type адреса (aht10: 0x38/0x39, vl53: 0x29, pcf8574: 0x20-0x23) + подсказка `SDA→22 SCL→23`
+  - Автопереключение pin↔addr при смене типа GPIO↔I2C (включая I2C→I2C смену адреса)
   - Per-type limits (UI + серверная валидация):
     relay:8, button:8, analog:4, pwm:4, neopixel:2, dht22:2, ds18b20:2, aht10:2, vl53:1, pcf8574:2
 - **Rules UI:** trigger=только входы (button/analog/dht22/ds18b20/aht10/vl53),
@@ -106,15 +109,7 @@ class ITransport {
 
 ## Роадмап
 
-### Следующий шаг — VL53L0X и PCF8574
-
-I2C инфраструктура уже готова (`i2cAddr` в Peripheral, Wire.begin, I2C конструктор в UI).
-Нужно только добавить реализацию типов:
-
-| Датчик | Тип | Библиотека | Адрес | Особенность |
-|--------|-----|------------|-------|-------------|
-| VL53L0X | ToF дистанция | `adafruit/Adafruit_VL53L0X` | 0x29 | XSHUT пин для >1 датчика |
-| PCF8574 | Порт-экспандер | `robtillaart/PCF8574` | 0x20–0x27 | 8 каналов |
+### Следующий шаг — PCF8574 ✅ VL53 — готово
 
 **PCF8574 — архитектура:** два новых типа `pcf_relay` и `pcf_button` в плоском списке
 периферии (каждый пин — отдельная запись). Добавить `uint8_t channel` в struct Peripheral.
@@ -256,4 +251,6 @@ lib_deps =
     milesburton/DallasTemperature @ ^3.9.0
     https://github.com/paulstoffregen/OneWire   # GitHub — PlatformIO registry не совместим с ESP32-C6
     adafruit/Adafruit AHTX0 @ ^2.0.5
+    adafruit/Adafruit_VL53L0X @ ^1.2.4
+    https://github.com/pololu/vl53l1x-arduino   # Pololu VL53L1X — для L1X чипа
 ```
