@@ -48,7 +48,10 @@ announce → subscribe +/set → config → {key}/state (не для датчи�
 ## Что сделано ✅
 
 ### mpcb-iot-core
-- WiFi connect + AP portal (captive)
+- WiFi connect + AP portal (captive, no-reboot flow):
+  после ввода WiFi портал остаётся жить, ESP коннектится в фоне (AP+STA),
+  показывает полученный IP, кнопка "Закрыть AP" запускает ConfigServer без ребута
+  (ESP32-C6 не умеет сканировать в чистом AP режиме — сканируем до старта AP)
 - MQTT: LWT, announce, config, state publish, +/set subscribe
 - BLE provisioning (NimBLE-Arduino v2): WiFi, MQTT, GPIO, Rules через BLE
 - OTA через BLE и через веб (HTTP upload .bin)
@@ -77,6 +80,9 @@ announce → subscribe +/set → config → {key}/state (не для датчи�
 - **Rules UI:** trigger=только входы (button/analog/dht22/ds18b20/aht10/vl53),
   target=только выходы (relay/pwm/neopixel/pcf8574);
   события и поле порога меняются динамически в зависимости от типа триггера
+- Нормализация ключей: `_sanitize()` оставляет только `[a-z0-9]` (пробелы/дефисы удаляются,
+  не конвертируются в `_`). JS `san()` синхронизирован. **Breaking:** старые метки с пробелами
+  дадут другой MQTT-ключ — нужно пересохранить периферию и правила
 - Нормализация ключей правил lowercase (BLE + веб)
 - Серверная валидация: forbidden pins, дубли, type limits, I2C типы пропускают pin-проверку
 
@@ -195,8 +201,8 @@ MQTT с калибровкой: `{"value":2048,"voltage":1.65,"converted":24.7,"
 
 Замеры на финальной прошивке (WiFi+BLE+MQTT+AHT10+rules):
 ```
-Flash: 86%  (1577 КБ из 1835 КБ)  — свободно ~258 КБ
-RAM:   18%  (59 КБ из 320 КБ)     — свободно ~268 КБ
+Flash: 86.2%  (1581 КБ из 1835 КБ)  — свободно ~254 КБ
+RAM:   18.1%  (59 КБ из 320 КБ)    — свободно ~268 КБ
 ```
 
 Крупнейшие константы в Flash:
